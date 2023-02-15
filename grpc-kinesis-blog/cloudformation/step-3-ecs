@@ -1,0 +1,343 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: 'grpc-blog-cluster'
+  ###############################           Start Grpc changes        #######################################
+  GrpcCloudwatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['-', [GrpcLogGroup, !Ref 'AWS::StackName']]
+      RetentionInDays: 14
+  GrpcTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    # Makes sure the log group is created before it is used.
+    Properties:
+      # Name of the task definition. Subsequent versions of the task definition are grouped together under this name.
+      Family: !Join ['', [!Ref ECSCluster, TaskDefinition]]
+      # awsvpc is required for Fargate
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '256'
+      Memory: 0.5GB
+      ExecutionRoleArn: !GetAtt GrpcExecutionRole.Arn
+      TaskRoleArn: !Ref GrpcTaskRole
+      ContainerDefinitions:
+        - Name:  GrpcServiceContainer
+          Image: sanketsirsikartc/streaming
+          Essential: true
+          Environment:
+            - Name: 'REDIS_ENDPOINT'
+              Value: !Join ['', ['redis://',!GetAtt RedisLoadBalancer.DNSName,':80']]
+            - Name: 'COGNITO_ENDPOINT'
+              Value: !ImportValue "grpc-blog-userpool-endpoint"
+          PortMappings:
+            - ContainerPort: 9090
+          # Send logs to CloudWatch Logs
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref GrpcCloudwatchLogsGroup
+              awslogs-stream-prefix: ecs
+  GrpcExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ['', [GrpcService-, ExecutionRole]]
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+  GrpcTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ['', [GrpcService-, TaskRole]]
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+  GrpcAutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ['', [GrpcService-, AutoScalingRole]]
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole'
+  GrpcContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Join ['', [RedisService, ContainerSecurityGroup]]
+      VpcId: !ImportValue grpc-blog-vpc-id
+      SecurityGroupIngress:
+        - IpProtocol: "-1"
+          CidrIp: '10.0.1.0/24'
+        - IpProtocol: "-1"
+          CidrIp: '10.0.2.0/24'
+        - IpProtocol: "-1"
+          CidrIp: '10.0.3.0/24'
+  GrpcService:
+    Type: AWS::ECS::Service
+    # This dependency is needed so that the load balancer is setup correctly in time
+    DependsOn:
+      - GrpcListenerTCP
+    Properties:
+      ServiceName: 'GrpcService'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref GrpcTaskDefinition
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      DesiredCount: 2
+      # This may need to be adjusted if the container takes a while to start up
+      HealthCheckGracePeriodSeconds: 300
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          # change to DISABLED if you're using private subnets that have access to a NAT gateway
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !ImportValue "grpc-blog-public-subnet-a"
+          SecurityGroups:
+            - !Ref GrpcContainerSecurityGroup
+      LoadBalancers:
+        - ContainerName: 'GrpcServiceContainer'
+          ContainerPort: 9090
+          TargetGroupArn: !Ref GrpcTargetGroup
+  GrpcTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Join ['', [GrpcService-, GrpcTargetGroup]]
+      Port: 80
+      Protocol: TCP
+      TargetType: ip
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '60' # default is 300
+      VpcId: !ImportValue grpc-blog-vpc-id
+  GrpcListenerTCP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref GrpcTargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref GrpcLoadBalancer
+      Port: 80
+      Protocol: TCP
+  GrpcLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: 'grpcservice-endpoint'
+      Scheme: internet-facing
+      Type: network
+      Subnets:
+        - !ImportValue "grpc-blog-public-subnet-a"
+        - !ImportValue "grpc-blog-public-subnet-b"
+        - !ImportValue "grpc-blog-public-subnet-c"
+  GrpcAutoScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MinCapacity: 1
+      MaxCapacity: 1
+      ResourceId: !Join ['/', [service, !Ref ECSCluster, !GetAtt GrpcService.Name]]
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+      # "The Amazon Resource Name (ARN) of an AWS Identity and Access Management (IAM) role that allows Application Auto Scaling to modify your scalable target."
+      RoleARN: !GetAtt RedisAutoScalingRole.Arn
+  GrpcAutoScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Join ['', [!Ref GrpcService, GrpcAutoScalingPolicy]]
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref GrpcAutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 10
+        ScaleOutCooldown: 10
+        # Keep things at or lower than 50% CPU utilization, for example
+        TargetValue: 50
+###############################           End Grpc changes        #######################################
+
+###############################           Start Redis changes        #######################################
+  RedisCloudwatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['-', [RedisLogGroup, !Ref 'AWS::StackName']]
+      RetentionInDays: 14
+  RedisTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    # Makes sure the log group is created before it is used.
+    Properties:
+      # Name of the task definition. Subsequent versions of the task definition are grouped together under this name.
+      Family: !Join ['', [!Ref ECSCluster, TaskDefinition]]
+      # awsvpc is required for Fargate
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '256'
+      Memory: 0.5GB
+      ExecutionRoleArn: !GetAtt RedisExecutionRole.Arn
+      TaskRoleArn: !Ref RedisTaskRole
+      ContainerDefinitions:
+        - Name:  RedisServiceContainer
+          Image: sanketsirsikartc/streaming-redis
+          PortMappings:
+            - ContainerPort: 6379
+          # Send logs to CloudWatch Logs
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref RedisCloudwatchLogsGroup
+              awslogs-stream-prefix: ecs
+  RedisExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ['', [RedisService-, ExecutionRole]]
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+  # A role for the containers
+  RedisTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ['', [RedisService-, TaskRole]]
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+  RedisAutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ['', [RedisService-, AutoScalingRole]]
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole'
+  RedisContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Join ['', [RedisService, ContainerSecurityGroup]]
+      VpcId: !ImportValue grpc-blog-vpc-id
+      SecurityGroupIngress:
+        - IpProtocol: "-1"
+          CidrIp: '10.0.1.0/24'
+        - IpProtocol: "-1"
+          CidrIp: '10.0.2.0/24'
+        - IpProtocol: "-1"
+          CidrIp: '10.0.3.0/24'
+  RedisService:
+    Type: AWS::ECS::Service
+    # This dependency is needed so that the load balancer is setup correctly in time
+    DependsOn:
+      - RedisListenerTCP
+    Properties:
+      ServiceName: 'RedisService'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref RedisTaskDefinition
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      DesiredCount: 2
+      # This may need to be adjusted if the container takes a while to start up
+      HealthCheckGracePeriodSeconds: 300
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          # change to DISABLED if you're using private subnets that have access to a NAT gateway
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !ImportValue "grpc-blog-public-subnet-a"
+          SecurityGroups:
+            - !Ref RedisContainerSecurityGroup
+      LoadBalancers:
+        - ContainerName: 'RedisServiceContainer'
+          ContainerPort: 6379
+          TargetGroupArn: !Ref RedisTargetGroup
+  RedisTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Join ['', [RedisService-, RedisTargetGroup]]
+      Port: 80
+      Protocol: TCP
+      TargetType: ip
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '60' # default is 300
+      VpcId: !ImportValue grpc-blog-vpc-id
+  RedisListenerTCP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref RedisTargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref RedisLoadBalancer
+      Port: 80
+      Protocol: TCP
+  RedisLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: redisservice-endpoint
+      Scheme: internal
+      Type: network
+      Subnets:
+        - !ImportValue "grpc-blog-public-subnet-a"
+        - !ImportValue "grpc-blog-public-subnet-b"
+        - !ImportValue "grpc-blog-public-subnet-c"
+  RedisAutoScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MinCapacity: 1
+      MaxCapacity: 1
+      ResourceId: !Join ['/', [service, !Ref ECSCluster, !GetAtt RedisService.Name]]
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+      # "The Amazon Resource Name (ARN) of an AWS Identity and Access Management (IAM) role that allows Application Auto Scaling to modify your scalable target."
+      RoleARN: !GetAtt RedisAutoScalingRole.Arn
+  AutoScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Join ['', [!Ref RedisService, RedisAutoScalingPolicy]]
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref RedisAutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 10
+        ScaleOutCooldown: 10
+        # Keep things at or lower than 50% CPU utilization, for example
+        TargetValue: 50
+###############################           End Redis changes        #######################################
+Outputs:
+  ELBURL:
+    Description: Your ALB DNS URL
+    Value: !Join ['', [!GetAtt [GrpcLoadBalancer, DNSName]]]
+  REDURL:
+    Description: Your ALB DNS URL
+    Export:
+      Name: "grpc-blog-redis-endpoint"
+    Value: !Join ['', ['redis://',!GetAtt RedisLoadBalancer.DNSName,':80']]

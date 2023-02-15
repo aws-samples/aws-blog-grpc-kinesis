@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Cognito setup"
+Resources:
+  ApiUserPool:
+    Type: "AWS::Cognito::UserPool"
+    Properties:
+      UserPoolName: "grpc-blog-demo-userpool"
+
+  ApiUserPoolClient:
+    Type: "AWS::Cognito::UserPoolClient"
+    DependsOn: ApiUserPoolResourceServer
+    Properties:
+      ClientName: "grpc-blog-ApiUserPoolClient"
+      RefreshTokenValidity: 3650
+      GenerateSecret: true
+      ExplicitAuthFlows:
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+        - ALLOW_CUSTOM_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      UserPoolId: !Ref ApiUserPool
+      PreventUserExistenceErrors: ENABLED
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthScopes:
+        - "grpc-blog-UserPoolResourceServer/grpc-blog-AdhocRequestsScope"
+
+  ApiUserPoolDomain:
+    Type: "AWS::Cognito::UserPoolDomain"
+    Properties:
+      Domain:
+        !Join
+          - ''
+          - - 'grpc-blog-domain-'
+            - !Select [1, !Split ["-", !ImportValue grpc-blog-securitygroup-id]]
+      UserPoolId: !Ref ApiUserPool
+
+  ApiUserPoolResourceServer:
+      Type: "AWS::Cognito::UserPoolResourceServer"
+      DependsOn: ApiUserPoolDomain
+      Properties:
+        Identifier: "grpc-blog-UserPoolResourceServer"
+        Name: "grpc-blog-UserPoolResourceServer"
+        UserPoolId: !Ref ApiUserPool
+        Scopes:
+          - ScopeName: "grpc-blog-AdhocRequestsScope"
+            ScopeDescription: "grpc-blog-AdhocRequestsScope"
+
+  UserPoolParameterStore:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: "Cognito User Pool Information"
+      Name: !Ref ApiUserPoolClient
+      Type: String
+      Value: "grpc-blog-demo-userpool"
+
+Outputs:
+  UserPoolClientId:
+    Description: "Id of api user pool client"
+    Value: !Ref ApiUserPoolClient
+    Export:
+      Name: "grpc-blog-userpool-clientid"
+
+  UserPoolEndpoint:
+    Description: "UserPool Endpoint"
+    Export:
+      Name: "grpc-blog-userpool-endpoint"
+    Value: !Join
+      - ''
+      - - !GetAtt ApiUserPool.ProviderURL
+        - '/.well-known/jwks.json'
+
+  DomainEndpoint:
+    Description: "UserPool Endpoint"
+    Export:
+      Name: "grpc-blog-domain-endpoint"
+    Value: !Join
+      - ''
+      - - 'https://'
+        - !Ref ApiUserPoolDomain
+        - '.auth.'
+        - !Ref "AWS::Region"
+        - '.amazoncognito.com/oauth2/token'

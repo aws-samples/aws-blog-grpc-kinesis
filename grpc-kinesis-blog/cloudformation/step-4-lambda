@@ -1,0 +1,95 @@
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Lambda function to get status for emr job given jobId."
+Parameters:
+  paramLambdaFunctionName:
+    Type: "String"
+    AllowedPattern: "^[a-zA-Z0-9]+[a-zA-Z0-9-]+[a-zA-Z0-9]+$"
+    AllowedValues: ["aws-grpc-blog-lambda"]
+
+Resources:
+  KinesisStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: "grpc-blog-kinesis-stream"
+      RetentionPeriodHours: 24
+      ShardCount: 1
+  LambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: "aws-grpc-blog-lambda-iam-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - "sts:AssumeRole"
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Effect: "Allow"
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${paramLambdaFunctionName}:*"
+          PolicyName: "aws-grpc-blog-lambda-loggroup-iam-policy"
+        - PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Action:
+                    - "kinesis:GetRecords"
+                    - "kinesis:GetShardIterator"
+                    - "kinesis:DescribeStream"
+                    - "kinesis:ListStreams"
+                  Effect: "Allow"
+                  Resource:
+                    - !GetAtt KinesisStream.Arn
+          PolicyName: "aws-grpc-blog-lambda-kinesis-iam-policy"
+  KinesisConsumerLambda:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: !Ref "paramLambdaFunctionName"
+      Environment:
+        Variables:
+          "REDIS_ENDPOINT" : !ImportValue "grpc-blog-redis-endpoint"
+      Code:
+        S3Bucket: sirsis-grpc
+        S3Key: "grpc-kinesis-lambdas.jar"
+      Description: "kinesis consumer lambda"
+      Handler: "com.amazonaws.blog.demo.KinesisConsumerLambda::handleRequest"
+      MemorySize: 256
+      Role: !GetAtt "LambdaExecutionRole.Arn"
+      Runtime: "java8"
+      Timeout: 300
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue "grpc-blog-securitygroup-id"
+        SubnetIds:
+          - Fn::ImportValue: "grpc-blog-public-subnet-a"
+  EvenSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 100
+      BisectBatchOnFunctionError: true
+      Enabled: true
+      EventSourceArn: !GetAtt KinesisStream.Arn
+      FunctionName: !Ref 'KinesisConsumerLambda'
+      MaximumBatchingWindowInSeconds: 10
+      MaximumRetryAttempts: 3
+      StartingPosition: "LATEST"
+
+
+Outputs:
+  KinesisStreamArn:
+    Description: "The check job status Lambda Arn"
+    Value: !GetAtt KinesisStream.Arn
+    Export:
+      Name: "aws-grpc-blog-kinesis-stream-arn"

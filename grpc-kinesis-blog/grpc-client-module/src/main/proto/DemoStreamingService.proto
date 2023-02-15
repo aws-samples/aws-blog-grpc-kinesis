@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+// standard libraries
+import "google/protobuf/empty.proto";
+import "google/rpc/status.proto";
+
+option java_package = "com.amazonaws.blog.demo";
+
+service DemoStreamingService {
+    // This server streaming method always starts a new stream with latest vehicle data.
+    rpc startStream (StartStreamRequest) returns (stream DemoStreamingServiceResponse);
+    //This unary method stops an active stream for given stream id.
+    rpc stopStream (StopStreamRequest) returns (DemoStreamingServiceResponse);
+}
+
+// Starts receiving the latest data
+message StartStreamRequest {
+}
+
+// Request contains the stream id to stop an active stream.
+message StopStreamRequest {
+}
+
+// Response data
+message DemoStreamingServiceResponse {
+    // standard error codes
+    google.rpc.Status status = 1;
+    // opaque ID of the stream, used to later call stopStream
+    string data = 3;
+}

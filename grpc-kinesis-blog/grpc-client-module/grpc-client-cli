@@ -1,0 +1,70 @@
+#!/usr/bin/env python
+
+from __future__ import print_function
+
+import os
+import subprocess
+import argparse
+import yaml
+
+jar_path = 'target/grpc-client-module-1.0-SNAPSHOT-jar-with-dependencies.jar'
+assert os.path.exists(jar_path), "Can't find path to jar file"
+
+clientId = ""
+clientSecret = ""
+tokenUrl = ""
+
+parser = argparse.ArgumentParser(
+  description='start stream or stop stream'
+)
+
+parser.add_argument(
+  '-a', '--api-action',
+  type=str,
+  choices=['start-stream','stop-stream'],
+  required=True,
+  help='choose to stream the latest data, at an offset, or stop a stream'
+)
+parser.add_argument('-v', '--verbose', action='store_true', help='increase output verbosity')
+
+mut_parser = parser.add_mutually_exclusive_group()
+
+def read_properties():
+    with open("properties.yaml", 'r') as stream:
+        try:
+            return yaml.safe_load(stream)
+        except yaml.YAMLError as exc:
+            print(exc)
+
+if __name__ == "__main__":
+  args = parser.parse_args()
+
+  properties = read_properties()
+
+  print(properties['clientId'],properties['clientSecret'],properties['tokenUrl'])
+
+  port = "80"
+
+  java_aux = ['java', '-jar', jar_path, properties['serviceEndpoint'], port, args.api_action,properties['clientId'],properties['clientSecret'],properties['tokenUrl'] ]
+
+  if args.verbose:
+    java_aux.append(str(args.verbose))
+    print(java_aux)
+  else:
+    java_aux.append('')
+
+  process = subprocess.Popen(
+    java_aux,
+    stdout=subprocess.PIPE,
+    universal_newlines=True
+  )
+
+  while True:
+    output = process.stdout.readline()
+    print(output.strip())
+    return_code = process.poll()
+    if return_code is not None:
+      print('RETURN CODE', return_code)
+      for output in process.stdout.readlines():
+        print(output.strip())
+      break

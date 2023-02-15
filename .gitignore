@@ -1,0 +1,10 @@
+/grpc-kinesis-blog/grpc-client-module/.idea/
+/grpc-kinesis-blog/grpc-client-module/target/
+/grpc-kinesis-blog/grpc-client-module/grpc-client-module.iml
+/grpc-kinesis-blog/grpc-server-module/.idea/
+/grpc-kinesis-blog/grpc-server-module/target/
+/grpc-kinesis-blog/grpc-server-module/grpc-server-module.iml
+/grpc-kinesis-blog/grpc-server-module/grpc-server-module-1.0-SNAPSHOT-jar-with-dependencies.jar
+/grpc-kinesis-blog/lambda-consumer-module/lambda-consumer-module.iml
+/grpc-kinesis-blog/lambda-consumer-module/target/
+/grpc-kinesis-blog/lambda-consumer-module/.idea/
