@@ -2,7 +2,6 @@ package com.amazonaws.blog.demo;
 
 import lombok.Getter;
 import lombok.Setter;
-import org.yaml.snakeyaml.Yaml;
 import software.amazon.kinesis.lifecycle.events.ProcessRecordsInput;
 
 import java.io.FileNotFoundException;
