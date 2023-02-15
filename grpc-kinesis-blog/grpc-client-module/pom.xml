@@ -20,7 +20,6 @@
     <io.grpc.version>1.26.0</io.grpc.version>
     <amazon.kinesis.client.version>2.2.7</amazon.kinesis.client.version>
     <amazon.sts.client.version>2.13.6</amazon.sts.client.version>
-    <snakeyaml.version>1.21</snakeyaml.version>
     <log4j.version>1.2.17</log4j.version>
     <lombok.version>1.18.10</lombok.version>
     <commons.codec.version>1.12</commons.codec.version>
@@ -68,11 +67,6 @@
       <artifactId>lombok</artifactId>
       <version>${lombok.version}</version>
       <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.yaml</groupId>
-      <artifactId>snakeyaml</artifactId>
-      <version>${snakeyaml.version}</version>
     </dependency>
     <dependency>
       <groupId>com.amazonaws</groupId>
