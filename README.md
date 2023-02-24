@@ -44,7 +44,8 @@ purposes and aren&#39;t intended for production use without any modifications.
 
 You can use this [downloadable template](./grpc-kinesis-blog/cloudformation/all_steps.yaml) for single-click deployment. This template is launched in the US East (N. Virginia) Region by default. Do not change to a different Region. The template is designed to work only in the US East (N. Virginia) Region. To launch directly through the console, choose the Launch Stack button.
 
-![image info](./images/LaunchStack.png)
+![](images/LaunchStack.png){width="1.3211001749781277in"
+height="0.24770559930008748in"}
 
 **1. Use the AWS CloudFormation template to configure Amazon VPC**
 
