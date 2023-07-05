@@ -15,7 +15,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
     <protobuf.java.version>3.16.3</protobuf.java.version>
-    <io.grpc.version>1.26.0</io.grpc.version>
+    <io.grpc.version>1.53.0</io.grpc.version>
     <amazon.kinesis.client.version>2.2.7</amazon.kinesis.client.version>
     <amazon.sts.client.version>2.13.6</amazon.sts.client.version>
     <log4j.version>1.2.17</log4j.version>
